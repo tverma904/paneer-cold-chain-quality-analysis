@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -12,12 +14,26 @@ from src.data_loader import load_quality_data, load_temperature_data
 from src.quality_analysis import (
     clean_quality_data,
     daily_quality_summary,
+    describe_adjusted_association,
+    describe_daily_trend,
     format_p_value,
     missing_value_summary,
     paired_correlations,
     quality_data_diagnostics,
+    storage_day_adjusted_association,
 )
 from src.temperature_analysis import analyze_temperature
+
+IMAGE_DIR = Path(__file__).resolve().parent / "assets" / "images"
+
+
+def show_illustrative_image(filename: str, caption: str) -> None:
+    image_path = IMAGE_DIR / filename
+    if image_path.is_file():
+        st.image(str(image_path), caption=caption, width="stretch")
+    else:
+        st.caption("Illustrative image unavailable.")
+
 
 st.set_page_config(
     page_title="Paneer Cold-Chain Quality Analysis",
@@ -189,6 +205,11 @@ correlations = (
     if quality_df is not None and not quality_df.empty
     else None
 )
+adjusted_association = (
+    storage_day_adjusted_association(quality_df)
+    if quality_df is not None and not quality_df.empty
+    else None
+)
 tabs = st.tabs(
     [
         "Overview",
@@ -200,11 +221,26 @@ tabs = st.tabs(
 )
 
 with tabs[0]:
-    if temperature_source == "Synthetic demonstration sample" or quality_source == "Synthetic demonstration sample":
+    if (
+        "Synthetic demonstration sample" in temperature_source
+        or "Synthetic demonstration sample" in quality_source
+    ):
         st.info(
             "**Demonstration Sample Data** — any dataset labelled “Synthetic "
             "demonstration sample” is synthetic example data for exploring the "
             "dashboard, not an experimental finding."
+        )
+    overview_intro = st.columns([1, 3])
+    with overview_intro[0]:
+        show_illustrative_image(
+            "cold-storage.jpg",
+            "Illustrative stock photo of a commercial cold room; not the study facility.",
+        )
+    with overview_intro[1]:
+        st.markdown("**Cold-chain and paneer quality, in context**")
+        st.caption(
+            "Stock imagery is illustrative only. All displayed indicators and "
+            "findings are calculated from the active data sources."
         )
     st.subheader("Dataset status")
     status_columns = st.columns(2)
@@ -275,7 +311,15 @@ with tabs[0]:
     )
 
 with tabs[1]:
-    st.subheader("Temperature over time")
+    monitoring_intro = st.columns([1, 3])
+    with monitoring_intro[0]:
+        show_illustrative_image(
+            "digital-thermometer.jpg",
+            "Illustrative digital thermometer and probe; the pictured display is unrelated to logged readings.",
+        )
+    with monitoring_intro[1]:
+        st.subheader("Temperature over time")
+        st.caption("Illustrative stock image; temperature charts show active dataset readings.")
     if temperature_df is None:
         st.info("Upload or provide a valid temperature CSV to begin.")
     else:
@@ -343,6 +387,21 @@ with tabs[1]:
                 "Longer intervals are unknown and excluded. Excursion counts are "
                 "observed runs; events inside unknown gaps cannot be inferred."
             )
+            if temperature_stats["readings_above_threshold"]:
+                st.caption(
+                    f"{temperature_stats['readings_above_threshold']:,} of "
+                    f"{temperature_stats['valid_readings']:,} valid readings "
+                    f"({temperature_stats['percent_readings_above_threshold']:.1f}%) "
+                    f"exceeded the {threshold:g} °C analytical reference; "
+                    f"{temperature_stats['excursion_count']} observed excursion(s) "
+                    "were identified. These observations alone do not establish "
+                    "unsafe food, equipment failure, or shelf life."
+                )
+            else:
+                st.caption(
+                    f"No valid readings exceeded the {threshold:g} °C analytical "
+                    "reference. This does not establish food safety."
+                )
             if temperature_stats["timestamp_gap_count"]:
                 st.warning(
                     f"{temperature_stats['timestamp_gap_count']} timestamp gap(s) "
@@ -417,6 +476,17 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader("Paneer quality over storage")
+    paneer_intro = st.columns([1, 3])
+    with paneer_intro[0]:
+        show_illustrative_image(
+            "paneer.jpg",
+            "Illustrative stock photo of fresh paneer block and cubes; unrelated to the sample measurements.",
+        )
+    with paneer_intro[1]:
+        st.caption(
+            "Illustrative food photograph only; quality charts use observed values "
+            "from the active workbook."
+        )
     if quality_df is None:
         st.info("Upload or provide a valid quality workbook to begin.")
     elif quality_df.empty:
@@ -429,57 +499,119 @@ with tabs[2]:
             st.warning(message)
 
         microbial_columns = [
-            ("TPC_Log10", "TPC (log10 CFU/mL)"),
-            ("Coliform_Log10", "Coliform (log10 CFU/mL)"),
-            ("Yeast_Mold_Log10", "Yeast/mold (log10 CFU/mL)"),
-            (
-                "Psychrophilic_Log10",
-                "Psychrophilic (log10 CFU/mL)",
-            ),
+            ("TPC", "TPC_CFU", "TPC_Log10"),
+            ("Coliform", "Coliform_CFU", "Coliform_Log10"),
+            ("Yeast/mold", "Yeast_Mold_CFU", "Yeast_Mold_Log10"),
+            ("Psychrophilic", "Psychrophilic_CFU", "Psychrophilic_Log10"),
         ]
         available_microbes = [
-            (column, label)
-            for column, label in microbial_columns
-            if column in quality_df and quality_df[column].notna().any()
+            item
+            for item in microbial_columns
+            if any(
+                column in quality_df and quality_df[column].notna().any()
+                for column in item[1:]
+            )
         ]
         st.markdown("**Daily microbial measurements**")
         st.caption(
-            "Log10 CFU/mL values are derived by the workbook. A raw count of zero "
-            "has no defined logarithm, so its log value is missing; the raw zero "
-            "count remains available in the cleaned table."
+            "Choose log10 CFU/mL or raw CFU/mL. Points show observed replicates; "
+            "the daily mean includes only nonmissing measurements. Error bars show "
+            "sample SD and are not displayed when fewer than two replicates are "
+            "available. A zero CFU/mL count is retained in raw-count views; its "
+            "logarithm is undefined and remains missing."
         )
         if not available_microbes:
             st.info("No microbial measurements are available.")
         else:
+            microbial_scale = st.radio(
+                "Microbial scale",
+                ["Log10 CFU/mL", "Raw CFU/mL"],
+                horizontal=True,
+                key="microbial_scale",
+            )
+            use_log_scale = microbial_scale == "Log10 CFU/mL"
+            day_start = int(quality_df["Day"].min())
+            day_end = int(quality_df["Day"].max())
+            days = list(range(day_start, day_end + 1))
             chart_columns = st.columns(2)
-            for index, (column, label) in enumerate(available_microbes):
+            for index, (name, raw_column, log_column) in enumerate(available_microbes):
+                column = log_column if use_log_scale else raw_column
+                unit_label = "log10 CFU/mL" if use_log_scale else "CFU/mL"
+                label = f"{name} ({unit_label})"
+                if column not in quality_df or not quality_df[column].notna().any():
+                    continue
                 with chart_columns[index % 2]:
-                    metric_summary = daily_summary[
-                        ["Day", f"{column}_Mean", f"{column}_N"]
-                    ].copy()
-                    metric_summary = metric_summary.set_index("Day").reindex(
-                        range(int(quality_df["Day"].min()), int(quality_df["Day"].max()) + 1)
+                    metric_summary = (
+                        daily_summary[
+                            ["Day", f"{column}_Mean", f"{column}_SD", f"{column}_N"]
+                        ]
+                        .set_index("Day")
+                        .reindex(days)
                     )
-                    fig = px.line(
-                        metric_summary.reset_index(),
-                        x="Day",
-                        y=f"{column}_Mean",
-                        markers=True,
-                        title=label,
-                        labels={
-                            "Day": "Storage day",
-                            f"{column}_Mean": label,
-                        },
+                    replicates = quality_df[["Day", "Replicate", column]].dropna(
+                        subset=[column]
                     )
-                    fig.update_traces(connectgaps=False)
+                    fig = go.Figure()
+                    fig.add_trace(
+                        go.Scatter(
+                            x=replicates["Day"],
+                            y=replicates[column],
+                            mode="markers",
+                            name="Replicate",
+                            marker={"size": 6, "opacity": 0.55, "color": "#8db8b0"},
+                            customdata=replicates[["Replicate"]].to_numpy(),
+                            hovertemplate=(
+                                "Storage day: %{x}<br>Replicate: %{customdata[0]}"
+                                f"<br>{label}: %{{y:.3f}}<extra>Observed replicate</extra>"
+                            ),
+                        )
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=days,
+                            y=metric_summary[f"{column}_Mean"],
+                            mode="lines+markers",
+                            name="Daily mean",
+                            connectgaps=False,
+                            line={"color": "#36b3a2", "width": 2},
+                            marker={"size": 8},
+                            error_y={
+                                "type": "data",
+                                "array": metric_summary[f"{column}_SD"],
+                                "visible": True,
+                                "color": "#b6c2ca",
+                                "thickness": 1.2,
+                                "width": 4,
+                            },
+                            customdata=np.column_stack(
+                                [
+                                    metric_summary[f"{column}_N"],
+                                    metric_summary[f"{column}_SD"],
+                                ]
+                            ),
+                            hovertemplate=(
+                                "Storage day: %{x}<br>Daily mean: %{y:.3f}"
+                                "<br>Sample SD: %{customdata[1]:.3f}"
+                                "<br>Valid observations: %{customdata[0]:.0f}"
+                                "<extra>Daily summary</extra>"
+                            ),
+                        )
+                    )
                     fig.update_layout(
                         template="plotly_dark",
                         height=330,
+                        title=f"{name}: daily mean ± SD and replicates",
+                        xaxis_title="Storage day",
+                        yaxis_title=label,
+                        hovermode="closest",
                         paper_bgcolor="#10171c",
                         plot_bgcolor="#10171c",
                         font={"color": "#e8eef2"},
                     )
                     st.plotly_chart(fig, width="stretch")
+                    st.caption(
+                        describe_daily_trend(quality_df, column, name, unit_label)
+                    )
 
         sensory_columns = [
             ("Colour_Appearance", "Colour and appearance"),
@@ -528,6 +660,15 @@ with tabs[2]:
                 "Missing sensory values are left missing; lines do not bridge "
                 "unobserved days."
             )
+            if "Overall_Acceptability" in quality_df:
+                st.caption(
+                    describe_daily_trend(
+                        quality_df,
+                        "Overall_Acceptability",
+                        "Overall acceptability",
+                        "score",
+                    )
+                )
 
         trend_columns = st.columns(2)
         for container, column, label, unit in [
@@ -564,6 +705,9 @@ with tabs[2]:
                         font={"color": "#e8eef2"},
                     )
                     st.plotly_chart(fig, width="stretch")
+                    st.caption(
+                        describe_daily_trend(quality_df, column, label, unit)
+                    )
 
         st.markdown("**Replicate-level and daily-summary data**")
         view = st.radio(
@@ -580,6 +724,17 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader("Microbial count and overall acceptability")
+    statistics_intro = st.columns([1, 3])
+    with statistics_intro[0]:
+        show_illustrative_image(
+            "microbiology-lab.jpg",
+            "Illustrative stock photo of a microbiology laboratory petri dish; not from this study.",
+        )
+    with statistics_intro[1]:
+        st.caption(
+            "This laboratory image is illustrative stock imagery, not evidence "
+            "about the experiment or its results."
+        )
     st.caption(
         "Correlations use rows where both measurements are present. Replicates are "
         "grouped by storage day, and shared day trends may contribute to pooled "
@@ -656,6 +811,43 @@ with tabs[3]:
             "replicate clustering or shared trends across storage days and do not "
             "establish causation."
         )
+
+    if quality_df is not None and adjusted_association is not None:
+        st.markdown("**Supplementary: association adjusted for storage day**")
+        if adjusted_association["estimable"]:
+            adjusted_columns = st.columns(3)
+            adjusted_columns[0].metric(
+                "Complete paired observations", adjusted_association["n"]
+            )
+            adjusted_columns[1].metric(
+                "Distinct storage days", adjusted_association["storage_days"]
+            )
+            adjusted_columns[2].metric(
+                "Residual Pearson r",
+                f"{adjusted_association['coefficient']:.3f}",
+            )
+            st.caption(adjusted_association["method"] + ".")
+            st.write(
+                describe_adjusted_association(
+                    correlations["pearson_r"]
+                    if correlations is not None
+                    else np.nan,
+                    adjusted_association,
+                )
+            )
+            st.caption(
+                "No p-value is reported: the residual correlation's usual "
+                "row-independent inference is not justified when replicates may "
+                "be clustered within storage day. The data do not document whether "
+                "replicate IDs track the same physical samples over time. Day "
+                "adjustment does not remove all possible confounding and is not "
+                "causal evidence."
+            )
+        else:
+            st.info(
+                "Storage-day-adjusted association is not estimable from the active "
+                f"paired data. {adjusted_association['reason']}"
+            )
 
 with tabs[4]:
     st.subheader("Data Explorer")

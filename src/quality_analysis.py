@@ -214,6 +214,165 @@ def paired_correlations(
     return result
 
 
+def storage_day_adjusted_association(
+    cleaned_df: pd.DataFrame,
+    x_column: str = "TPC_Log10",
+    y_column: str = "Overall_Acceptability",
+    day_column: str = "Day",
+) -> dict[str, Any]:
+    """Correlate linear storage-day residuals as a descriptive partial association.
+
+    Replicates may be clustered within day; consequently this function does not
+    report an inferential p-value from a row-independent residual correlation.
+    """
+    required = {x_column, y_column, day_column}
+    missing_columns = required - set(cleaned_df.columns)
+    if missing_columns:
+        raise ValueError(f"Quality data is missing columns: {sorted(missing_columns)}")
+
+    paired = cleaned_df[[x_column, y_column, day_column]].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    paired = paired.loc[np.isfinite(paired).all(axis=1)]
+    paired_count = len(paired)
+    day_count = int(paired[day_column].nunique())
+    result: dict[str, Any] = {
+        "n": paired_count,
+        "storage_days": day_count,
+        "coefficient": np.nan,
+        "p_value": np.nan,
+        "estimable": False,
+        "method": "Pearson correlation between separate linear storage-day OLS residuals",
+        "reason": "",
+    }
+    if paired_count < 4 or day_count < 4:
+        result["reason"] = (
+            "At least four complete pairs across four distinct storage days are "
+            "needed to describe residual association."
+        )
+        return result
+
+    day_values = paired[day_column].to_numpy(dtype=float)
+    design = np.column_stack([np.ones(paired_count), day_values])
+    x_values = paired[x_column].to_numpy(dtype=float)
+    y_values = paired[y_column].to_numpy(dtype=float)
+    x_residuals = x_values - design @ np.linalg.lstsq(design, x_values, rcond=None)[0]
+    y_residuals = y_values - design @ np.linalg.lstsq(design, y_values, rcond=None)[0]
+
+    x_tolerance = np.finfo(float).eps * max(float(np.max(np.abs(x_values))), 1.0) * 100
+    y_tolerance = np.finfo(float).eps * max(float(np.max(np.abs(y_values))), 1.0) * 100
+    if (
+        np.ptp(x_residuals) <= x_tolerance
+        or np.ptp(y_residuals) <= y_tolerance
+    ):
+        result["reason"] = (
+            "The residual association is not estimable because at least one "
+            "measurement has no variation after linear adjustment for storage day."
+        )
+        return result
+
+    result.update(
+        coefficient=float(stats.pearsonr(x_residuals, y_residuals).statistic),
+        estimable=True,
+        reason=(
+            "Descriptive only: the coefficient has no p-value because replicate "
+            "clustering within storage day is not modeled."
+        ),
+    )
+    return result
+
+
+def describe_daily_trend(
+    cleaned_df: pd.DataFrame,
+    column: str,
+    label: str,
+    unit: str,
+) -> str:
+    """Describe the observed first-to-last daily mean without extrapolation."""
+    if column not in cleaned_df:
+        return f"{label}: this measurement is unavailable."
+
+    valid = cleaned_df[["Day", column]].copy()
+    valid[column] = pd.to_numeric(valid[column], errors="coerce")
+    valid = valid.loc[np.isfinite(valid["Day"]) & np.isfinite(valid[column])]
+    daily = valid.groupby("Day")[column].agg(["mean", "count"]).sort_index()
+    if daily.empty:
+        return f"{label}: no valid observations are available."
+    if len(daily) == 1:
+        day = daily.index[0]
+        return (
+            f"{label}: observations are available only on storage day {day:g} "
+            f"(n={int(daily.iloc[0]['count'])}); a change over storage cannot be assessed."
+        )
+
+    first_day, last_day = daily.index[0], daily.index[-1]
+    first_mean, last_mean = daily.iloc[0]["mean"], daily.iloc[-1]["mean"]
+    difference = last_mean - first_mean
+    scale = max(abs(first_mean), abs(last_mean), 1.0)
+    if abs(difference) <= np.finfo(float).eps * scale * 10:
+        direction = "was similar"
+    elif difference > 0:
+        direction = "increased"
+    else:
+        direction = "decreased"
+    expected_days = set(
+        np.arange(int(daily.index.min()), int(daily.index.max()) + 1).tolist()
+    )
+    missing_days = sorted(expected_days - set(daily.index.tolist()))
+    missing_note = (
+        f" No valid measurements were available on {len(missing_days)} intervening "
+        "storage day(s)."
+        if missing_days
+        else ""
+    )
+    return (
+        f"{label}: the daily mean {direction} from {first_mean:.2f} {unit} "
+        f"(day {first_day:g}, n={int(daily.iloc[0]['count'])}) to "
+        f"{last_mean:.2f} {unit} (day {last_day:g}, "
+        f"n={int(daily.iloc[-1]['count'])}).{missing_note} This descriptive "
+        "comparison does not establish food safety, causation, or shelf life."
+    )
+
+
+def describe_adjusted_association(
+    pooled_coefficient: float,
+    adjusted_result: dict[str, Any],
+) -> str:
+    """Compare pooled and day-adjusted coefficients without causal language."""
+    if not adjusted_result["estimable"]:
+        return (
+            "Storage-day-adjusted association cannot be estimated: "
+            f"{adjusted_result['reason']}"
+        )
+    if not np.isfinite(pooled_coefficient):
+        return (
+            f"The storage-day-adjusted descriptive coefficient is "
+            f"{adjusted_result['coefficient']:.3f}; the pooled coefficient was "
+            "not estimable, so their strengths cannot be compared."
+        )
+
+    pooled = float(pooled_coefficient)
+    adjusted = float(adjusted_result["coefficient"])
+    magnitude_change = abs(adjusted) - abs(pooled)
+    if magnitude_change > 0.05:
+        magnitude_comparison = "stronger in absolute magnitude"
+    elif magnitude_change < -0.05:
+        magnitude_comparison = "weaker in absolute magnitude"
+    else:
+        magnitude_comparison = "similar in absolute magnitude"
+    if np.sign(adjusted) != np.sign(pooled) and pooled != 0 and adjusted != 0:
+        comparison = f"changed direction and was {magnitude_comparison}"
+    else:
+        comparison = f"was {magnitude_comparison}"
+    return (
+        f"After separate linear adjustment for storage day, the residual "
+        f"association was {adjusted:.3f}, compared with pooled Pearson r="
+        f"{pooled:.3f}; it {comparison} "
+        f"(absolute-magnitude change {magnitude_change:+.3f}). This is a descriptive "
+        "comparison, not evidence that storage-day confounding is eliminated."
+    )
+
+
 def format_p_value(p_value: float | None) -> str:
     """Format p-values consistently for dashboard output."""
     if p_value is None or not np.isfinite(p_value):

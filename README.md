@@ -99,6 +99,12 @@ error and remains usable for uploading a valid replacement.
   an imputed zero and should be interpreted alongside the raw count.
 - Daily summaries use the mean, sample standard deviation (ddof=1), and
   nonmissing sample count for each numeric measure.
+- Microbial charts can display either raw CFU/mL counts or workbook-derived
+  log10 CFU/mL values. They show individual observed replicates, daily means,
+  sample-SD error bars where estimable, and valid counts in hover details.
+  Missing days remain gaps; a single valid observation has an undefined sample
+  SD. Zero counts remain available in raw-count views and have missing,
+  mathematically undefined log values.
 - Correlations use only rows with both TPC and overall acceptability present.
   Pearson and Spearman coefficients and p-values are reported with the paired
   sample count. The pooled analysis does not model replicates clustered within
@@ -106,6 +112,13 @@ error and remains usable for uploading a valid replacement.
   association; its p-values should therefore be interpreted cautiously.
   Storage days without sensory observations are excluded entirely. A
   correlation does not establish causation.
+- A supplementary descriptive analysis separately regresses TPC and
+  acceptability on linear storage day and correlates the resulting residuals.
+  It requires at least four complete pairs across four days and does not report
+  a row-independent p-value because replicate clustering is not modeled. The
+  residual comparison does not remove all confounding, establish causation, or
+  identify whether replicates represent repeated measurements of the same
+  physical units; that structure is not documented.
 - Missing sensory values are not interpolated; charts leave unobserved days
   blank.
 
@@ -173,3 +186,26 @@ conditions inside unknown gaps, and recorded microbial or sensory measures
 alone do not establish safety, causation, or shelf life. Confirm data
 definitions with the study protocol and use applicable validated food-safety
 procedures for decisions.
+
+## Illustrative image credits
+
+The dashboard uses locally stored, resized image derivatives in
+`assets/images/`. They are illustrative stock photographs only; none depict
+the study's samples, equipment, laboratory, or measured results. Crops and
+resizing are noted below.
+
+- **Overview — cold room:** [Cold Room After Installation](https://commons.wikimedia.org/wiki/File:Cold_Room_After_Installation.jpg)
+  by Mesadbal, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+  Cropped and resized for the dashboard.
+- **Paneer Quality — paneer:** [Panir Paneer Indian cheese fresh](https://commons.wikimedia.org/wiki/File:Panir_Paneer_Indian_cheese_fresh.jpg)
+  by Sonja Pauen (Stanhopea), [CC BY 2.0 Germany](https://creativecommons.org/licenses/by/2.0/de/deed.en).
+  Cropped and resized for the dashboard.
+- **Cold-Chain Monitoring — thermometer:** [Digital Thermometer TES-1302](https://commons.wikimedia.org/wiki/File:Digital_Thermometer_TES-1302.jpg)
+  by Andy116, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+  Cropped and resized for the dashboard.
+- **Statistical Analysis — microbiology:** [National Lab Week 130410-F-TT327-015](https://commons.wikimedia.org/wiki/File:National_Lab_Week_130410-F-TT327-015.jpg),
+  U.S. Air Force photograph by Airman 1st Class Jason Couillard; public domain
+  in the United States. Resized for the dashboard.
+
+Image captions in the app identify the photos as illustrative and distinguish
+them from the active dataset and its results.

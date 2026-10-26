@@ -11,10 +11,13 @@ from src.data_loader import load_quality_data, load_temperature_data
 from src.quality_analysis import (
     clean_quality_data,
     daily_quality_summary,
+    describe_adjusted_association,
+    describe_daily_trend,
     format_p_value,
     missing_value_summary,
     paired_correlations,
     quality_data_diagnostics,
+    storage_day_adjusted_association,
 )
 from src.temperature_analysis import analyze_temperature, clean_temperature_data
 
@@ -223,6 +226,53 @@ class DataLoaderTests(unittest.TestCase):
         self.assertEqual(len(loaded_temperature), len(cleaned_temperature))
         self.assertEqual(len(loaded_quality), len(raw_quality))
 
+    def test_bundled_quality_sample_has_independent_replicate_variation(self):
+        from src.data_loader import PROJECT_ROOT
+
+        cleaned = clean_quality_data(
+            pd.read_excel(
+                PROJECT_ROOT / "data" / "sample" / "paneer_quality_demo.xlsx",
+                header=None,
+            )
+        )
+        paired = cleaned.dropna(
+            subset=["TPC_Log10", "Overall_Acceptability"]
+        ).copy()
+        self.assertEqual(paired["Day"].nunique(), 10)
+
+        matching_replicate_ranks = 0
+        for _, day_data in paired.groupby("Day"):
+            tpc_ranks = day_data["TPC_Log10"].rank(method="first").to_numpy()
+            acceptability_ranks = day_data["Overall_Acceptability"].rank(
+                method="first"
+            ).to_numpy()
+            matching_replicate_ranks += int(
+                np.array_equal(tpc_ranks, acceptability_ranks)
+            )
+        self.assertLess(
+            matching_replicate_ranks,
+            paired["Day"].nunique(),
+            "TPC and acceptability must not share the same replicate ordering every day.",
+        )
+
+        daily = paired.groupby("Day")[["TPC_Log10", "Overall_Acceptability"]].mean()
+        self.assertGreater(daily["TPC_Log10"].iloc[-1], daily["TPC_Log10"].iloc[0])
+        self.assertLess(
+            daily["Overall_Acceptability"].iloc[-1],
+            daily["Overall_Acceptability"].iloc[0],
+        )
+        self.assertGreaterEqual(
+            int(np.count_nonzero(np.diff(daily["TPC_Log10"]) > 0)), 7
+        )
+        self.assertGreaterEqual(
+            int(np.count_nonzero(np.diff(daily["Overall_Acceptability"]) < 0)), 7
+        )
+        self.assertTrue(
+            cleaned.loc[
+                cleaned["Day"].between(10, 13), "Overall_Acceptability"
+            ].isna().all()
+        )
+
     def test_malformed_uploads_raise_clear_read_errors(self):
         malformed_temperature = BytesIO(b"not_a_temperature_column\n1\n")
         with self.assertRaisesRegex(
@@ -417,6 +467,23 @@ class QualityAnalysisTests(unittest.TestCase):
             day_zero["TPC_Log10_SD"], np.std([0.2, 0.3, 0.4, 0.5], ddof=1)
         )
 
+    def test_daily_summary_single_observation_has_undefined_sample_sd(self):
+        cleaned = pd.DataFrame(
+            {
+                "Day": [0, 0, 1],
+                "Replicate": [1, 2, 1],
+                "TPC_Log10": [2.0, np.nan, 3.0],
+            }
+        )
+
+        summary = daily_quality_summary(cleaned).set_index("Day")
+
+        self.assertEqual(summary.loc[0, "TPC_Log10_N"], 1)
+        self.assertEqual(summary.loc[0, "TPC_Log10_Mean"], 2.0)
+        self.assertTrue(np.isnan(summary.loc[0, "TPC_Log10_SD"]))
+        self.assertTrue(np.isnan(summary.loc[1, "TPC_Log10_SD"]))
+        self.assertEqual(summary.loc[1, "TPC_Log10_N"], 1)
+
     def test_correlations_use_only_paired_observations(self):
         data = pd.DataFrame(
             {
@@ -432,6 +499,138 @@ class QualityAnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(result["spearman_r"], -1)
         self.assertEqual(format_p_value(0.0001), "<0.001")
         self.assertEqual(format_p_value(0.05), "0.050")
+
+    def test_correlation_helpers_use_the_supplied_active_observations(self):
+        data = pd.DataFrame(
+            {
+                "Day": np.repeat(np.arange(4), 3),
+                "TPC_Log10": [
+                    1.0, 1.2, 0.9, 1.8, 1.6, 2.1, 2.7, 2.5, 2.9, 3.0, 3.4, 3.2
+                ],
+                "Overall_Acceptability": [
+                    9.0, 8.4, 8.8, 8.1, 8.7, 7.9, 7.5, 8.0, 7.2, 6.8, 6.1, 6.5
+                ],
+            }
+        )
+        altered = data.copy()
+        altered["Overall_Acceptability"] = [
+            8.2, 9.1, 8.5, 7.7, 8.9, 7.9, 8.3, 7.1, 7.8, 6.0, 7.2, 6.5
+        ]
+
+        pooled = paired_correlations(data)
+        altered_pooled = paired_correlations(altered)
+        self.assertEqual(pooled["n"], len(data))
+        self.assertAlmostEqual(
+            pooled["pearson_r"],
+            np.corrcoef(data["TPC_Log10"], data["Overall_Acceptability"])[0, 1],
+        )
+        self.assertNotAlmostEqual(
+            pooled["pearson_r"], altered_pooled["pearson_r"], places=3
+        )
+
+        adjusted = storage_day_adjusted_association(data)
+        altered_adjusted = storage_day_adjusted_association(altered)
+        self.assertEqual(adjusted["n"], len(data))
+        design = np.column_stack([np.ones(len(data)), data["Day"].to_numpy()])
+        tpc_residuals = data["TPC_Log10"].to_numpy() - design @ np.linalg.lstsq(
+            design, data["TPC_Log10"].to_numpy(), rcond=None
+        )[0]
+        acceptability_residuals = (
+            data["Overall_Acceptability"].to_numpy()
+            - design
+            @ np.linalg.lstsq(
+                design, data["Overall_Acceptability"].to_numpy(), rcond=None
+            )[0]
+        )
+        expected_adjusted = np.corrcoef(tpc_residuals, acceptability_residuals)[0, 1]
+        self.assertAlmostEqual(adjusted["coefficient"], expected_adjusted)
+        self.assertNotAlmostEqual(
+            adjusted["coefficient"], altered_adjusted["coefficient"], places=3
+        )
+
+    def test_day_adjusted_association_uses_complete_pairs_only(self):
+        rows = []
+        for day in range(5):
+            for replicate, deviation in enumerate([-1.0, 1.0], start=1):
+                rows.append(
+                    {
+                        "Day": day,
+                        "TPC_Log10": 2 * day + deviation,
+                        "Overall_Acceptability": 10 - day + deviation * 0.5,
+                    }
+                )
+        rows.append(
+            {"Day": 5, "TPC_Log10": np.nan, "Overall_Acceptability": 2.0}
+        )
+        cleaned = pd.DataFrame(rows)
+
+        result = storage_day_adjusted_association(cleaned)
+
+        self.assertEqual(result["n"], 10)
+        self.assertEqual(result["storage_days"], 5)
+        self.assertTrue(result["estimable"])
+        self.assertAlmostEqual(result["coefficient"], 1.0)
+        self.assertTrue(np.isnan(result["p_value"]))
+
+    def test_day_adjusted_association_handles_too_few_days_and_constant_residuals(self):
+        few_days = pd.DataFrame(
+            {
+                "Day": [0, 0, 1, 1, 2, 2],
+                "TPC_Log10": [1, 2, 3, 4, 5, 6],
+                "Overall_Acceptability": [6, 5, 4, 3, 2, 1],
+            }
+        )
+        too_few = storage_day_adjusted_association(few_days)
+        self.assertFalse(too_few["estimable"])
+        self.assertTrue(np.isnan(too_few["coefficient"]))
+
+        constant_residuals = pd.DataFrame(
+            {
+                "Day": [0, 0, 1, 1, 2, 2, 3, 3],
+                "TPC_Log10": [0, 0, 1, 1, 2, 2, 3, 3],
+                "Overall_Acceptability": [8, 7, 7, 8, 6, 5, 5, 6],
+            }
+        )
+        not_estimable = storage_day_adjusted_association(constant_residuals)
+        self.assertFalse(not_estimable["estimable"])
+        self.assertIn("no variation", not_estimable["reason"])
+
+    def test_dynamic_trend_interpretations_use_observed_values_and_missing_days(self):
+        cleaned = pd.DataFrame(
+            {
+                "Day": [0, 0, 1, 3],
+                "TPC_Log10": [2.0, 4.0, np.nan, 8.0],
+            }
+        )
+
+        interpretation = describe_daily_trend(
+            cleaned, "TPC_Log10", "TPC", "log10 CFU/mL"
+        )
+
+        self.assertIn("increased from 3.00", interpretation)
+        self.assertIn("to 8.00", interpretation)
+        self.assertIn("2 intervening storage day", interpretation)
+        self.assertIn("n=2", interpretation)
+        self.assertIn("n=1", interpretation)
+
+    def test_adjusted_interpretation_compares_computed_coefficients(self):
+        adjusted = {"estimable": True, "coefficient": -0.2}
+
+        interpretation = describe_adjusted_association(-0.8, adjusted)
+
+        self.assertIn("weaker in absolute magnitude", interpretation)
+        self.assertIn("-0.200", interpretation)
+        self.assertIn("-0.800", interpretation)
+
+    def test_dynamic_trend_reports_when_values_cannot_be_compared(self):
+        cleaned = pd.DataFrame({"Day": [2, 2], "TPC_Log10": [3.0, np.nan]})
+
+        interpretation = describe_daily_trend(
+            cleaned, "TPC_Log10", "TPC", "log10 CFU/mL"
+        )
+
+        self.assertIn("only on storage day 2", interpretation)
+        self.assertIn("cannot be assessed", interpretation)
 
     def test_incorrect_workbook_width_is_reported(self):
         with self.assertRaisesRegex(ValueError, "expected at least 27 columns"):
