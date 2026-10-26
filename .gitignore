@@ -2,8 +2,17 @@
 __pycache__/
 *.py[cod]
 .env
+.env.*
 .streamlit/secrets.toml
 data/raw/
 data/processed/
+# Small synthetic examples are safe to publish and power the deployed demo.
+!data/sample/
+!data/sample/**
 .ipynb_checkpoints/
 .DS_Store
+.pytest_cache/
+.coverage
+*.tmp
+*.temp
+*.swp
