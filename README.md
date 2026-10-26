@@ -1,130 +1,175 @@
 # Paneer Cold-Chain Quality Analysis
 
-A Streamlit dashboard for exploring refrigerator temperature and humidity logs
-alongside paneer microbial, sensory, and physicochemical measurements during
-storage. The project supports reproducible data cleaning and descriptive and
-paired statistical analysis; it does not determine food safety or shelf life.
+An interactive Streamlit dashboard for exploring refrigerator conditions and
+paneer quality measurements across storage time. It brings temperature and
+humidity logs together with microbial, sensory, and physicochemical data, while
+making missing observations and analytical limitations visible.
 
-## Problem statement
+**Live dashboard:** [Open Paneer Cold-Chain Quality Analysis on Streamlit](https://paneer-cold-chain-quality-analysis-5ajwnvdfcpqusuusurmvnd.streamlit.app/)
 
-Refrigerator readings and product-quality results are often stored in separate
-files and formats. This project brings the measurements into one interactive
-view so users can inspect cold-chain patterns, storage-day trends, missing
-values, and associations between paired quality measurements.
+> The dashboard is an exploratory analysis tool, not a food-safety assessment
+> or a validated shelf-life determination. Bundled results are synthetic
+> demonstrations, not experimental findings.
 
-## Datasets
+## Project overview
 
-The application accepts:
+Cold-chain temperature records and product-quality measurements are often
+collected separately. Reviewing them together can help identify patterns in
+storage conditions, product measurements, missing data, and paired
+observations over time.
 
-- **Temperature log (CSV):** expected columns include `Counter`,
-  `Time_Stamp`, `Temperature`, `RH`, `Compressor`, and `Fridge_Open`.
-  Timestamps are parsed day-first. Temperature and RH are numeric; state
-  columns retain their recorded representation.
-- **Paneer quality workbook (Excel):** the original workbook has grouped
-  headings and blank separator columns and is read without a header row. Its
-  documented positional layout
-  has at least 27 columns. The four microbial groups each have a raw CFU/mL
-  value, a dilution value, and a derived log10 CFU/mL value: TPC at columns
-  2–4, coliform at 5–7, yeast/mold at 8–10, and psychrophilic at 11–13.
-  Sensory scores are at columns 15–18, pH at 20, moisture percentage at 21,
-  and yield/fat fields at 23–26.
+This project provides a reproducible workflow for loading and cleaning those
+files, summarizing measurements by storage day, exploring temperature
+excursions, and comparing paired microbial and sensory observations. The
+default deployment uses small synthetic sample datasets, and users can
+optionally load their own compatible files.
 
-### Bundled demonstration data
+## Dashboard features
 
-The app loads the small, committed files in `data/sample/` by default:
+The dashboard has five sections:
 
-- `temperature_demo.csv` — 289 synthetic readings at ten-minute intervals
-  across 48 hours.
-- `paneer_quality_demo.xlsx` — 70 synthetic replicate observations covering
-  storage days 0–13, with five replicates per day and realistic missing
-  measurements. Sensory values are absent for days 10–13 to demonstrate the
-  observed-data handling and correlation sample limits.
+1. **Overview** — active dataset status and source labels, cold-chain KPIs,
+   latest available quality indicators, and data-quality diagnostics.
+2. **Cold-Chain Monitoring** — interactive temperature and humidity charts,
+   a configurable temperature reference threshold, excursion estimates,
+   timestamp-gap warnings, and door/compressor state summaries.
+3. **Paneer Quality** — microbial trends in log10 CFU/mL or raw CFU/mL, with
+   replicate points, daily means, sample-standard-deviation error bars, and
+   valid counts; sensory trends; pH and moisture trends; and replicate-level or
+   daily-summary tables.
+4. **Statistical Analysis** — paired TPC versus overall-acceptability
+   scatterplot, Pearson and Spearman correlations, paired sample counts and
+   p-values, and a separate descriptive association adjusted for linear
+   storage day.
+5. **Data Explorer** — filtered, cleaned quality observations, missing-value
+   summaries, cleaned-data downloads, and daily-summary downloads.
 
-These are **synthetic demonstration examples**, not the study's experimental
-results. The notice and source labels in the app identify which dataset is
-synthetic. The demo is self-contained and requires no secrets or private data.
+## Methodology
 
-The full `data/raw/` and processed data directories remain git-ignored. The
-bundled `data/sample/` files are deliberately allowed in Git so Community Cloud
-can load them. The app does not automatically load the private raw files.
-You may keep your original full datasets in `data/raw/` for safekeeping, but
-select them with the sidebar uploaders when you want to analyze them.
+### Temperature excursions
 
-Optional sidebar uploads replace the sample independently for each dataset.
-For example, uploading only a temperature CSV uses that CSV and continues to
-use the synthetic workbook. Invalid uploads display an error and fall back to
-the corresponding bundled demo if it is available. Uploads are held in memory
-by Streamlit; the app does not save over local files or persist uploads.
+Temperature timestamps are parsed day-first and observations are sorted.
+Duplicate timestamps are retained as readings for descriptive summaries but
+averaged to one timestamp for duration estimation. Threshold time is estimated
+by linearly interpolating between valid adjacent observations only when their
+gap is no longer than the user-configured maximum gap (30 minutes by default).
+Longer gaps are treated as unknown. Excursion counts describe observed runs;
+events inside long gaps cannot be inferred.
 
-If a local file is missing, empty, or malformed, the app reports a clear load
-error and remains usable for uploading a valid replacement.
+The default 4.0 °C threshold is a **configurable analytical reference**, not a
+food-safety guarantee. A reading above it does not by itself establish unsafe
+food or equipment failure.
 
-## Methodology and assumptions
+### Paneer quality measurements
 
-### Temperature monitoring
+The workbook is read without assuming a single-row header. The cleaning
+function validates the expected positional layout and key headings, maps the
+documented measurement columns, and keeps only integer storage days 0–13 and
+replicates 1–5. This excludes summary rows such as Mean and SD. Missing values
+remain missing; they are not filled with zero.
 
-- Dates are parsed with day-first interpretation. Invalid timestamps and
-  nonnumeric temperature values are retained as missing for review and excluded
-  from timestamped statistics.
-- Duplicate timestamp readings count as individual valid readings in
-  temperature and humidity summaries, but are averaged into one timestamp for
-  duration estimation.
-- The threshold (default 4 °C) is a configurable analytical reference, not a
-  safety guarantee.
-- Time above the threshold is estimated by linear interpolation across adjacent
-  valid timestamp observations only when their gap is no longer than the
-  configured maximum (default 30 minutes). Longer gaps are unknown and excluded.
-- Excursion count represents observed above-threshold runs. Unobserved events
-  inside long gaps cannot be identified. Longest duration and recovery duration
-  are estimates under the same interpolation and gap assumptions.
-- Door-opening counts describe observed closed/off-to-open/on transitions;
-  state during long gaps is not inferred. Humidity, compressor, and door values
-  are summarized as recorded.
+Daily summaries report each variable's mean, sample standard deviation, and
+nonmissing observation count. Microbial charts can show the workbook-provided
+log10 CFU/mL values or raw CFU/mL values. Zero raw counts remain available in
+raw-count views; their logarithm is undefined and remains missing. Charts show
+observed replicates and do not bridge missing days.
 
-### Paneer quality
+### Exploratory and statistical analysis
 
-- Workbook positions and row-2 heading labels are validated against the
-  documented layout. A sheet with fewer than 27 columns or unexpected key
-  headings is rejected with a schema error rather than silently mapped.
-- Only rows with integer storage days 0–13 and integer replicate numbers 1–5
-  are retained. This excludes Mean/SD summary rows and other headings.
-- Measurements are converted to numeric values while preserving missing data;
-  no missing value is replaced with zero.
-- Column 4 is named `TPC_Log10` as documented. Other microbial fields are
-  named using the workbook's CFU/mL, dilution, and log10 formula layout.
-- The workbook derives each log measurement as
-  `log10(CFU_per_mL / 10^(-dilution))`. A raw CFU value of zero makes that
-  logarithm undefined, so the workbook formula result is missing while the
-  corresponding raw zero count remains present. This missing log value is not
-  an imputed zero and should be interpreted alongside the raw count.
-- Daily summaries use the mean, sample standard deviation (ddof=1), and
-  nonmissing sample count for each numeric measure.
-- Microbial charts can display either raw CFU/mL counts or workbook-derived
-  log10 CFU/mL values. They show individual observed replicates, daily means,
-  sample-SD error bars where estimable, and valid counts in hover details.
-  Missing days remain gaps; a single valid observation has an undefined sample
-  SD. Zero counts remain available in raw-count views and have missing,
-  mathematically undefined log values.
-- Correlations use only rows with both TPC and overall acceptability present.
-  Pearson and Spearman coefficients and p-values are reported with the paired
-  sample count. The pooled analysis does not model replicates clustered within
-  storage day or separate shared storage-day trends from replicate-level
-  association; its p-values should therefore be interpreted cautiously.
-  Storage days without sensory observations are excluded entirely. A
-  correlation does not establish causation.
-- A supplementary descriptive analysis separately regresses TPC and
-  acceptability on linear storage day and correlates the resulting residuals.
-  It requires at least four complete pairs across four days and does not report
-  a row-independent p-value because replicate clustering is not modeled. The
-  residual comparison does not remove all confounding, establish causation, or
-  identify whether replicates represent repeated measurements of the same
-  physical units; that structure is not documented.
-- Missing sensory values are not interpolated; charts leave unobserved days
-  blank.
+Daily trend descriptions compare the first and last days with valid observed
+values and report the contributing counts. They are descriptive and do not
+extrapolate to unmeasured days.
 
-## Installation
+Pearson and Spearman correlations use complete TPC-log and
+overall-acceptability pairs from the active dataset. The supplementary
+storage-day-adjusted coefficient is calculated by separately fitting ordinary
+least-squares linear models for TPC and acceptability against storage day, then
+correlating their residuals. The adjusted coefficient is descriptive only; no
+adjusted p-value is reported because replicate clustering is not modeled.
+Neither pooled nor adjusted association establishes causation.
 
-Python 3.10 or newer is recommended.
+## Findings and interpretation
+
+### Bundled synthetic demonstration results
+
+The following values are calculated from the bundled synthetic samples to
+demonstrate the dashboard. **They are not results from the original
+experiment.**
+
+- The temperature sample contains 289 readings across approximately 48 hours.
+  At the default 4.0 °C analytical reference, 29 readings (10.0%) are above
+  the threshold; five observed excursions are counted, with about 5.18 hours
+  estimated above the reference under the configured gap and interpolation
+  method.
+- The synthetic quality workbook contains 70 replicate rows: five per day
+  across days 0–13. It has 50 paired TPC/acceptability observations on days
+  0–9; acceptability is missing on days 10–13.
+- Across the 50 pairs, pooled Pearson r is approximately −0.966 and Spearman
+  ρ is approximately −0.964. The descriptive linear storage-day-adjusted
+  residual correlation is approximately +0.085. No adjusted p-value is
+  reported. Pooled p-values are shown by the app but do not account for
+  replicate clustering.
+- In the synthetic workbook, daily mean TPC increases from approximately
+  2.34 log10 CFU/mL on day 0 to 5.09 on day 9, while mean overall
+  acceptability declines from approximately 8.88 to 4.92 over those observed
+  days.
+
+These values are recalculated from the bundled files and are included only to
+illustrate functionality. The original experimental datasets are not included
+in the repository, so this README makes no claims about their measured
+findings. Upload an authorized, compatible experimental dataset to explore its
+results. Correlation does not establish causation.
+
+## Technology stack
+
+The application uses:
+
+- **Python** for data loading, cleaning, and analysis.
+- **Streamlit** for the interactive dashboard and file uploads.
+- **Pandas** and **NumPy** for tabular processing and numerical calculations.
+- **SciPy** for Pearson and Spearman statistics.
+- **Plotly Express** and **Plotly Graph Objects** for interactive charts.
+- **OpenPyXL** for Excel workbook support.
+
+Dependencies and minimum versions are listed in [requirements.txt](requirements.txt).
+
+## Repository structure
+
+```text
+.
+├── app.py
+├── requirements.txt
+├── README.md
+├── .gitignore
+├── .streamlit/
+│   └── config.toml
+├── assets/
+│   └── images/
+│       ├── cold-storage.jpg
+│       ├── digital-thermometer.jpg
+│       ├── microbiology-lab.jpg
+│       └── paneer.jpg
+├── data/
+│   ├── sample/
+│   │   ├── paneer_quality_demo.xlsx
+│   │   └── temperature_demo.csv
+│   └── raw/                 # local-only; ignored by Git
+├── src/
+│   ├── data_loader.py
+│   ├── quality_analysis.py
+│   └── temperature_analysis.py
+└── tests/
+    └── test_analysis.py
+```
+
+The full experimental files are excluded by the `data/raw/` Git ignore rule.
+Only the small synthetic demonstration datasets in `data/sample/` are intended
+to be tracked. Do not add private data or secrets to the repository.
+
+## Installation and local run
+
+Use Python 3.10 or newer. From the repository root, create and activate a
+virtual environment in Windows PowerShell, then install the requirements:
 
 ```powershell
 py -m venv .venv
@@ -132,80 +177,103 @@ py -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-## Run locally
-
-From the project root:
+Start the dashboard from the same project directory:
 
 ```powershell
 streamlit run app.py
 ```
 
-On startup, the bundled samples load automatically. Use the sidebar to
-optionally replace either sample with your own CSV or Excel workbook.
+Streamlit prints a local URL in the terminal when the app is ready.
 
-## Dashboard features
+## Using bundled samples and uploads
 
-1. **Overview:** dataset load status, computed cold-chain indicators, latest
-   available quality indicators, and expected-observation diagnostics.
-2. **Cold-Chain Monitoring:** interactive temperature and humidity charts,
-   threshold and estimation-gap controls, excursion summaries, gap warnings,
-   and door/compressor state counts.
-3. **Paneer Quality:** daily microbial trends, sensory trends, pH and moisture,
-   plus replicate-level and daily-summary tables.
-4. **Statistical Analysis:** paired TPC/overall-acceptability scatter plot,
-   Pearson and Spearman statistics, p-values, and interpretation limitations.
-5. **Data Explorer:** filtered quality observations, missingness summary, and
-   CSV downloads for cleaned datasets and daily summaries.
+The bundled synthetic CSV and Excel workbook load automatically on startup.
+The sidebar identifies the active source for each dataset separately and
+provides optional upload controls:
 
-## Tests
+- Temperature log: CSV with `Time_Stamp` and `Temperature`; optional fields
+  include `Counter`, `RH`, `Compressor`, and `Fridge_Open`.
+- Paneer quality workbook: Excel file with the documented positional layout
+  and expected row-2 headings.
 
-The analysis tests use synthetic data and do not require the private datasets:
+An upload replaces the bundled sample for that dataset only. For example,
+uploading a temperature CSV while leaving the workbook uploader empty uses the
+uploaded temperature data and bundled synthetic quality data. Invalid uploads
+show an error and fall back to the corresponding bundled sample when it can be
+loaded. Uploaded files are processed in memory and are not written over the
+bundled samples or local raw datasets.
+
+## Data sources and image credits
+
+The committed `data/sample/` files are explicitly synthetic examples for
+exploring the dashboard. Original experimental data may be held locally in
+`data/raw/`, but those files are ignored by Git and are not bundled with this
+project. Use only data you are authorized to analyze.
+
+The locally stored photos are illustrative stock imagery, not photographs of
+the study's actual samples, equipment, or laboratory. Cropping or resizing is
+noted below:
+
+- **Overview — cold room:** [Cold Room After Installation](https://commons.wikimedia.org/wiki/File:Cold_Room_After_Installation.jpg)
+  by Mesadbal, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+  Cropped and resized.
+- **Paneer Quality — paneer:** [Panir Paneer Indian cheese fresh](https://commons.wikimedia.org/wiki/File:Panir_Paneer_Indian_cheese_fresh.jpg)
+  by Sonja Pauen (Stanhopea), [CC BY 2.0 Germany](https://creativecommons.org/licenses/by/2.0/de/deed.en).
+  Cropped and resized.
+- **Cold-Chain Monitoring — thermometer:** [Digital Thermometer TES-1302](https://commons.wikimedia.org/wiki/File:Digital_Thermometer_TES-1302.jpg)
+  by Andy116, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+  Cropped and resized.
+- **Statistical Analysis — microbiology:** [National Lab Week 130410-F-TT327-015](https://commons.wikimedia.org/wiki/File:National_Lab_Week_130410-F-TT327-015.jpg),
+  U.S. Air Force photograph by Airman 1st Class Jason Couillard; public domain
+  in the United States. Resized.
+
+## Screenshots
+
+No screenshots are included in this README. To add genuine screenshots, run the
+app locally with the bundled sample data, capture the rendered Overview or a
+dashboard section in your browser, save the image under a tracked path such as
+`docs/screenshots/`, and then embed it using a repository-relative Markdown
+path. Do not present stock imagery as a screenshot of the application.
+
+## Testing and verification
+
+Run the unit tests from the project root:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-## Deploy on Streamlit Community Cloud
+Optional local checks:
 
-1. Push the application code, `requirements.txt`, `README.md`, `.streamlit/`,
-   and the small `data/sample/` demonstration files to a GitHub repository.
-   Keep private raw data and secrets out of the repository.
-2. In Streamlit Community Cloud, create an app from that repository and select
-   `app.py` as the entry point.
-3. Deploy. The app opens with synthetic samples; users can optionally replace
-   either dataset using the sidebar uploaders.
-4. Do not place private datasets in the repository or configure secrets for
-   the sample-data demo.
+```powershell
+python -m compileall -q app.py src tests
+python -m pip check
+git diff --check
+```
 
-## Limitations and responsible interpretation
+The test suite uses deterministic synthetic fixtures and the bundled sample
+files; it does not require the original experimental datasets.
 
-Results depend on timestamp quality, measurement completeness, the workbook's
-documented positional layout, and the units/transformations used when
-measurements were recorded. Time-between-reading estimates do not reveal
-conditions inside unknown gaps, and recorded microbial or sensory measures
-alone do not establish safety, causation, or shelf life. Confirm data
-definitions with the study protocol and use applicable validated food-safety
-procedures for decisions.
+## Limitations and future improvements
 
-## Illustrative image credits
+- Temperature exposure estimates depend on timestamp quality and the configured
+  maximum gap. Conditions inside longer gaps are unknown, and interpolation is
+  only an estimate.
+- Microbial, sensory, and physicochemical measurements depend on the
+  workbook's positional mapping and documented units. Confirm these with the
+  study protocol before interpreting uploaded workbooks.
+- Pooled correlation p-values do not account for replicates clustered within
+  storage days. The adjusted residual coefficient is descriptive and does not
+  remove all confounding. Replicate identity is not documented as tracking the
+  same physical sample over time.
+- Missing observations limit conclusions; they are not evidence of zero
+  measurements. Sensory values are not interpolated.
+- Neither a temperature reference nor the measured quality indicators alone
+  establish food safety or a validated shelf life. Use appropriate validated
+  methods and applicable food-safety procedures for operational decisions.
 
-The dashboard uses locally stored, resized image derivatives in
-`assets/images/`. They are illustrative stock photographs only; none depict
-the study's samples, equipment, laboratory, or measured results. Crops and
-resizing are noted below.
-
-- **Overview — cold room:** [Cold Room After Installation](https://commons.wikimedia.org/wiki/File:Cold_Room_After_Installation.jpg)
-  by Mesadbal, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-  Cropped and resized for the dashboard.
-- **Paneer Quality — paneer:** [Panir Paneer Indian cheese fresh](https://commons.wikimedia.org/wiki/File:Panir_Paneer_Indian_cheese_fresh.jpg)
-  by Sonja Pauen (Stanhopea), [CC BY 2.0 Germany](https://creativecommons.org/licenses/by/2.0/de/deed.en).
-  Cropped and resized for the dashboard.
-- **Cold-Chain Monitoring — thermometer:** [Digital Thermometer TES-1302](https://commons.wikimedia.org/wiki/File:Digital_Thermometer_TES-1302.jpg)
-  by Andy116, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
-  Cropped and resized for the dashboard.
-- **Statistical Analysis — microbiology:** [National Lab Week 130410-F-TT327-015](https://commons.wikimedia.org/wiki/File:National_Lab_Week_130410-F-TT327-015.jpg),
-  U.S. Air Force photograph by Airman 1st Class Jason Couillard; public domain
-  in the United States. Resized for the dashboard.
-
-Image captions in the app identify the photos as illustrative and distinguish
-them from the active dataset and its results.
+Future work could add study-protocol documentation, validated experimental
+unit and repeated-measure handling when those details are available, and
+additional checks for uploaded workbook schemas. Any inferential extensions
+should be based on the actual study design rather than assumptions about
+replicate independence.
